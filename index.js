@@ -45,6 +45,25 @@ async function run() {
       }
     })
 
+    // Get API - Fetch all parcel data of user
+    app.get('/parcels' , async (req , res) => {
+      try{
+        const userEmail = req.query.email;
+        const query = userEmail ? {userEmail : userEmail} : {};
+
+        const options = {
+          sort : {createdAt : -1},
+        }
+
+        const parcels = await parcelCollection.find(query , options).toArray();
+        res.send(parcels)
+      }
+      catch(error) {
+        console.error("Error Fetching parcels : " , error);
+        res.status(500).send({massage : "Failed to get Parcels"})
+      }
+    })
+
 
     await client.db("admin").command({ ping: 1 });
     console.log(
