@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 // Load environment variables
 dotenv.config();
@@ -61,6 +61,35 @@ async function run() {
       catch(error) {
         console.error("Error Fetching parcels : " , error);
         res.status(500).send({massage : "Failed to get Parcels"})
+      }
+    })
+
+    // Delete API - Delete a parcel 
+    app.delete('/parcels/:id' , async (req , res) => {
+      try{
+        const id = req.params.id;
+
+        const result = await parcelCollection.deleteOne({_id: new ObjectId(id)})
+        
+        if (result.deletedCount > 0) {
+          res.send({
+            success: true,
+            message: "Parcel deleted successfully",
+            deletedCount: result.deletedCount
+          });
+        } else {
+          res.status(404).send({
+            success: false,
+            message: "Parcel not found"
+          });
+        }
+      }
+      catch(error) {
+        console.error("Error deleting parcel : " , error)
+        res.status(500).send({
+          success: false,
+          message: "Failed to delete parcel"
+        })
       }
     })
 
