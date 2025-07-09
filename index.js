@@ -93,6 +93,22 @@ async function run() {
       }
     })
 
+    // Get API - Fetch parcel data by id
+    app.get('/parcels/:id' , async (req , res) => {
+      try {
+        const id = req.params.id;
+        const parcel = await parcelCollection.findOne({_id: new ObjectId(id)});
+
+        if(!parcel){
+          return res.status(404).send({message : "Parcel Not Found"})
+        }
+        res.send(parcel)
+      }
+      catch(error){
+        console.log(error)
+      }
+    })
+
 
     await client.db("admin").command({ ping: 1 });
     console.log(
