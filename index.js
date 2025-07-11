@@ -3,6 +3,7 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const stripe = require('stripe');
+const admin = require("firebase-admin");
 
 // Load environment variables
 dotenv.config();
@@ -18,6 +19,14 @@ const port = process.env.PORT || 5000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+
+let serviceAccount = require("./FirebaseAdminKey.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
 
 const user = process.env.DB_USER;
 const pass = process.env.DB_PASS;
@@ -40,6 +49,32 @@ async function run() {
     const paymentCollection = db.collection('payments')
     const usersCollection = db.collection('users')
 
+    // Custom MiddleWares
+    const verifyFirebaseToken = async(req , res , next) => {
+      console.log("Headers in middleware : " , req.headers)
+      const authHeader = req.headers.authorization;
+
+      if(!authHeader) {
+        return res.status(401).send({message : "Unauthorized Access"})
+      }
+
+      const token = authHeader.split(' ')[1];
+
+      if(!token){
+        return res.status(401).send({message : "Unauthorized Access"})
+      }
+
+      try {
+        // Verify The Token
+        const decodedToken = await admin.auth().verifyIdToken(token);
+        req.user = decodedToken;
+        next();
+      } catch (error) {
+        console.error('Token verification failed:', error);
+        return res.status(401).send({message : "Invalid Token"});
+      }
+    }
+
     // Users
     app.post('/users' , async (req , res) => {
       const email = req.body.email;
@@ -57,7 +92,7 @@ async function run() {
     // All API
 
     // Post API - Create a new parcel
-    app.post('/parcels', async (req, res) => {
+    app.post('/parcels', verifyFirebaseToken, async (req, res) => {
       try {
         const parcelData = req.body;
         const result = await parcelCollection.insertOne(parcelData);
@@ -68,7 +103,7 @@ async function run() {
     })
 
     // Get API - Fetch all parcel data of user
-    app.get('/parcels' , async (req , res) => {
+    app.get('/parcels', verifyFirebaseToken, async (req , res) => {
       try{
         const userEmail = req.query.email;
         const query = userEmail ? {userEmail : userEmail} : {};
@@ -87,7 +122,7 @@ async function run() {
     })
 
     // Delete API - Delete a parcel 
-    app.delete('/parcels/:id' , async (req , res) => {
+    app.delete('/parcels/:id', verifyFirebaseToken, async (req , res) => {
       try{
         const id = req.params.id;
 
@@ -116,7 +151,7 @@ async function run() {
     })
 
     // Get API - Fetch parcel data by id
-    app.get('/parcels/:id' , async (req , res) => {
+    app.get('/parcels/:id', verifyFirebaseToken, async (req , res) => {
       try {
         const id = req.params.id;
         const parcel = await parcelCollection.findOne({_id: new ObjectId(id)});
@@ -159,7 +194,7 @@ async function run() {
     })
 
     // PATCH API - Update parcel status (for admin/delivery updates)
-    app.patch('/parcels/:id/status', async (req, res) => {
+    app.patch('/parcels/:id/status', verifyFirebaseToken, async (req, res) => {
       try {
         const id = req.params.id;
         const { status, updateNote } = req.body;
@@ -209,7 +244,8 @@ async function run() {
     })
 
     // PATCH API - Update parcel payment status and store payment history
-    app.patch('/parcels/:id/payment', async (req, res) => {
+    app.patch('/parcels/:id/payment', verifyFirebaseToken, async (req, res) => {
+      
       try {
         const id = req.params.id;
         const { paymentIntentId, status, paymentAmount, paymentDate, userEmail } = req.body;
@@ -273,7 +309,7 @@ async function run() {
     })
 
     // Get API - Fetch payment history
-    app.get('/payments', async (req, res) => {
+    app.get('/payments', verifyFirebaseToken ,  async (req, res) => {
       try {
         const userEmail = req.query.email;
         const query = userEmail ? {userEmail: userEmail} : {};
@@ -296,7 +332,7 @@ async function run() {
     // Stripe Payment APIs
 
     // Create Payment Intent
-    app.post('/create-payment-intent', async (req, res) => {
+    app.post('/create-payment-intent', verifyFirebaseToken, async (req, res) => {
       try {
         const { amount, parcelId } = req.body;
 
