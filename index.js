@@ -115,6 +115,83 @@ async function run() {
       }
     })
 
+    // Get API - Search parcel by tracking number
+    app.get('/parcels/track/:trackingNumber', async (req, res) => {
+      try {
+        const trackingNumber = req.params.trackingNumber;
+        const parcel = await parcelCollection.findOne({trackingNumber: trackingNumber});
+
+        if(!parcel){
+          return res.status(404).send({
+            success: false,
+            message: "Parcel not found with this tracking number"
+          })
+        }
+        
+        res.send({
+          success: true,
+          data: parcel
+        })
+      }
+      catch(error){
+        console.error("Error searching parcel by tracking number:", error)
+        res.status(500).send({
+          success: false,
+          message: "Failed to search parcel"
+        })
+      }
+    })
+
+    // PATCH API - Update parcel status (for admin/delivery updates)
+    app.patch('/parcels/:id/status', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status, updateNote } = req.body;
+
+        const validStatuses = ['pending', 'paid', 'processing', 'shipped', 'in-transit', 'out-for-delivery', 'delivered', 'cancelled'];
+        
+        if (!validStatuses.includes(status)) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid status"
+          });
+        }
+
+        const updateData = {
+          status: status,
+          updatedAt: new Date().toISOString()
+        };
+
+        if (updateNote) {
+          updateData.lastUpdateNote = updateNote;
+        }
+
+        const result = await parcelCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Parcel not found"
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Parcel status updated successfully",
+          modifiedCount: result.modifiedCount
+        });
+      } catch (error) {
+        console.error("Error updating parcel status:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to update parcel status"
+        });
+      }
+    })
+
     // PATCH API - Update parcel payment status and store payment history
     app.patch('/parcels/:id/payment', async (req, res) => {
       try {
