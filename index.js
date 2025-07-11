@@ -37,6 +37,7 @@ async function run() {
 
     const db = client.db('proFast');
     const parcelCollection = db.collection('parcels')
+    const paymentCollection = db.collection('payments')
     // All API
 
     // Post API - Create a new parcel
@@ -114,13 +115,43 @@ async function run() {
       }
     })
 
-    // PATCH API - Update parcel payment status
+    // PATCH API - Update parcel payment status and store payment history
     app.patch('/parcels/:id/payment', async (req, res) => {
       try {
         const id = req.params.id;
-        const { paymentIntentId, status, paymentAmount, paymentDate } = req.body;
+        const { paymentIntentId, status, paymentAmount, paymentDate, userEmail } = req.body;
 
+        // Get parcel information before updating
+        const parcel = await parcelCollection.findOne({_id: new ObjectId(id)});
+        if (!parcel) {
+          return res.status(404).send({
+            success: false,
+            message: "Parcel not found"
+          });
+        }
+
+        // Store payment history in paymentCollection
+        const paymentRecord = {
+          parcelId: id,
+          parcelTrackingNumber: parcel.trackingNumber,
+          userEmail: userEmail || parcel.userEmail,
+          paymentIntentId: paymentIntentId,
+          paymentAmount: paymentAmount,
+          paymentDate: paymentDate,
+          paymentStatus: status,
+          parcelTitle: parcel.title,
+          senderName: parcel.senderName,
+          receiverName: parcel.receiverName,
+          senderRegion: parcel.senderRegion,
+          receiverRegion: parcel.receiverRegion,
+          createdAt: new Date().toISOString()
+        };
+
+        await paymentCollection.insertOne(paymentRecord);
+
+        // Update parcel status
         const updateData = {
+          status: status === 'paid' ? 'paid' : 'pending',
           paymentStatus: status,
           paymentIntentId: paymentIntentId,
           paymentAmount: paymentAmount,
@@ -133,23 +164,38 @@ async function run() {
           { $set: updateData }
         );
 
-        if (result.matchedCount === 0) {
-          return res.status(404).send({
-            success: false,
-            message: "Parcel not found"
-          });
-        }
-
         res.send({
           success: true,
-          message: "Payment status updated successfully",
-          modifiedCount: result.modifiedCount
+          message: "Payment processed and parcel status updated successfully",
+          modifiedCount: result.modifiedCount,
+          paymentRecorded: true
         });
       } catch (error) {
         console.error("Error updating payment status:", error);
         res.status(500).send({
           success: false,
           message: "Failed to update payment status"
+        });
+      }
+    })
+
+    // Get API - Fetch payment history
+    app.get('/payments', async (req, res) => {
+      try {
+        const userEmail = req.query.email;
+        const query = userEmail ? {userEmail: userEmail} : {};
+
+        const options = {
+          sort: {createdAt: -1}
+        };
+
+        const payments = await paymentCollection.find(query, options).toArray();
+        res.send(payments);
+      } catch (error) {
+        console.error("Error fetching payment history:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch payment history"
         });
       }
     })
@@ -237,16 +283,47 @@ async function run() {
           // Update parcel status if needed
           if (paymentIntent.metadata.parcelId) {
             try {
-              await parcelCollection.updateOne(
-                { _id: new ObjectId(paymentIntent.metadata.parcelId) },
-                { 
-                  $set: { 
+              // Get parcel information
+              const parcel = await parcelCollection.findOne({_id: new ObjectId(paymentIntent.metadata.parcelId)});
+              
+              if (parcel) {
+                // Store payment history in paymentCollection if not already stored
+                const existingPayment = await paymentCollection.findOne({paymentIntentId: paymentIntent.id});
+                
+                if (!existingPayment) {
+                  const paymentRecord = {
+                    parcelId: paymentIntent.metadata.parcelId,
+                    parcelTrackingNumber: parcel.trackingNumber,
+                    userEmail: parcel.userEmail,
+                    paymentIntentId: paymentIntent.id,
+                    paymentAmount: paymentIntent.metadata.parcelCost,
+                    paymentDate: new Date().toISOString(),
                     paymentStatus: 'confirmed',
-                    stripePaymentIntentId: paymentIntent.id,
-                    webhookConfirmedAt: new Date().toISOString()
-                  } 
+                    parcelTitle: parcel.title,
+                    senderName: parcel.senderName,
+                    receiverName: parcel.receiverName,
+                    senderRegion: parcel.senderRegion,
+                    receiverRegion: parcel.receiverRegion,
+                    createdAt: new Date().toISOString(),
+                    source: 'webhook'
+                  };
+
+                  await paymentCollection.insertOne(paymentRecord);
                 }
-              );
+
+                // Update parcel status
+                await parcelCollection.updateOne(
+                  { _id: new ObjectId(paymentIntent.metadata.parcelId) },
+                  { 
+                    $set: { 
+                      status: 'paid',
+                      paymentStatus: 'confirmed',
+                      stripePaymentIntentId: paymentIntent.id,
+                      webhookConfirmedAt: new Date().toISOString()
+                    } 
+                  }
+                );
+              }
             } catch (error) {
               console.error('Error updating parcel after webhook:', error);
             }
