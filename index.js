@@ -2,9 +2,14 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require('stripe');
 
 // Load environment variables
 dotenv.config();
+
+// Initialize Stripe
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+const stripeInstance = stripe(stripeSecretKey);
 
 // Create Express app
 const app = express();
@@ -109,6 +114,156 @@ async function run() {
       }
     })
 
+    // PATCH API - Update parcel payment status
+    app.patch('/parcels/:id/payment', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { paymentIntentId, status, paymentAmount, paymentDate } = req.body;
+
+        const updateData = {
+          paymentStatus: status,
+          paymentIntentId: paymentIntentId,
+          paymentAmount: paymentAmount,
+          paymentDate: paymentDate,
+          updatedAt: new Date().toISOString()
+        };
+
+        const result = await parcelCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Parcel not found"
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Payment status updated successfully",
+          modifiedCount: result.modifiedCount
+        });
+      } catch (error) {
+        console.error("Error updating payment status:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to update payment status"
+        });
+      }
+    })
+
+    // Stripe Payment APIs
+
+    // Create Payment Intent
+    app.post('/create-payment-intent', async (req, res) => {
+      try {
+        const { amount, parcelId } = req.body;
+
+        // Validate required fields
+        if (!amount || !parcelId) {
+          return res.status(400).send({
+            error: 'Amount and parcelId are required'
+          });
+        }
+
+        // Validate amount (should be at least 50 cents for Stripe)
+        if (amount < 50) {
+          return res.status(400).send({
+            error: 'Amount must be at least 50 cents'
+          });
+        }
+
+        // Verify parcel exists
+        const parcel = await parcelCollection.findOne({_id: new ObjectId(parcelId)});
+        if (!parcel) {
+          return res.status(404).send({
+            error: 'Parcel not found'
+          });
+        }
+
+        // Create payment intent (amount should already be in cents from frontend)
+        const paymentIntent = await stripeInstance.paymentIntents.create({
+          amount: amount, // Amount already in cents
+          currency: 'usd',
+          automatic_payment_methods: {
+            enabled: true,
+          },
+          metadata: {
+            parcelId: parcelId,
+            parcelCost: parcel.cost
+          }
+        });
+
+        res.send({
+          clientSecret: paymentIntent.client_secret,
+          paymentIntentId: paymentIntent.id
+        });
+      } catch (error) {
+        console.error('Error creating payment intent:', error);
+        res.status(500).send({
+          error: 'Failed to create payment intent',
+          details: error.message
+        });
+      }
+    });
+
+    // Stripe Webhook (Optional - for handling payment confirmations)
+    app.post('/webhook/stripe', express.raw({type: 'application/json'}), async (req, res) => {
+      const sig = req.headers['stripe-signature'];
+      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+      if (!webhookSecret) {
+        console.log('Webhook secret not configured');
+        return res.status(200).send('Webhook secret not configured');
+      }
+
+      let event;
+
+      try {
+        event = stripeInstance.webhooks.constructEvent(req.body, sig, webhookSecret);
+      } catch (err) {
+        console.log(`Webhook signature verification failed.`, err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+      }
+
+      // Handle the event
+      switch (event.type) {
+        case 'payment_intent.succeeded':
+          const paymentIntent = event.data.object;
+          console.log('Payment succeeded:', paymentIntent.id);
+          
+          // Update parcel status if needed
+          if (paymentIntent.metadata.parcelId) {
+            try {
+              await parcelCollection.updateOne(
+                { _id: new ObjectId(paymentIntent.metadata.parcelId) },
+                { 
+                  $set: { 
+                    paymentStatus: 'confirmed',
+                    stripePaymentIntentId: paymentIntent.id,
+                    webhookConfirmedAt: new Date().toISOString()
+                  } 
+                }
+              );
+            } catch (error) {
+              console.error('Error updating parcel after webhook:', error);
+            }
+          }
+          break;
+        
+        case 'payment_intent.payment_failed':
+          const failedPayment = event.data.object;
+          console.log('Payment failed:', failedPayment.id);
+          break;
+        
+        default:
+          console.log(`Unhandled event type ${event.type}`);
+      }
+
+      res.status(200).send('Webhook received');
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
