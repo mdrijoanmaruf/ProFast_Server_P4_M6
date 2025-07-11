@@ -38,6 +38,22 @@ async function run() {
     const db = client.db('proFast');
     const parcelCollection = db.collection('parcels')
     const paymentCollection = db.collection('payments')
+    const usersCollection = db.collection('users')
+
+    // Users
+    app.post('/users' , async (req , res) => {
+      const email = req.body.email;
+      const userExists = await usersCollection.findOne({email})
+
+      // TODO : Update last log in info
+      if(userExists){
+        return res.status(200).send({message : "User already exists" , inserted: false})
+      }
+      const user = req.body;
+      const result = await usersCollection.insertOne(user);
+      res.send(result)
+    })
+
     // All API
 
     // Post API - Create a new parcel
