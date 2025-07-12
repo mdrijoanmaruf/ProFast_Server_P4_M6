@@ -48,6 +48,7 @@ async function run() {
     const parcelCollection = db.collection('parcels')
     const paymentCollection = db.collection('payments')
     const usersCollection = db.collection('users')
+    const ridersCollection = db.collection('rider')
 
     // Custom MiddleWares
     const verifyFirebaseToken = async(req , res , next) => {
@@ -148,6 +149,13 @@ async function run() {
           message: "Failed to delete parcel"
         })
       }
+    })
+
+    // Raiders
+    app.post('/riders' , async (req , res) => {
+      const rider = req.body;
+      const result = await ridersCollection.insertOne(rider)
+      res.send(result)
     })
 
     // Get API - Fetch parcel data by id
