@@ -154,8 +154,102 @@ async function run() {
     // Raiders
     app.post('/riders' , async (req , res) => {
       const rider = req.body;
+      rider.status = 'pending'; // Set default status
+      rider.createdAt = new Date().toISOString();
       const result = await ridersCollection.insertOne(rider)
       res.send(result)
+    })
+
+    // Get all riders with optional status filter
+    app.get('/riders', verifyFirebaseToken, async (req, res) => {
+      try {
+        const status = req.query.status;
+        const query = status ? { status: status } : {};
+        
+        const options = {
+          sort: { createdAt: -1 }
+        };
+
+        const riders = await ridersCollection.find(query, options).toArray();
+        res.send(riders);
+      } catch (error) {
+        console.error("Error fetching riders:", error);
+        res.status(500).send({ message: "Failed to fetch riders" });
+      }
+    })
+
+    // Update rider status
+    app.patch('/riders/:id/status', verifyFirebaseToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body;
+
+        const validStatuses = ['pending', 'active', 'rejected'];
+        
+        if (!validStatuses.includes(status)) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid status"
+          });
+        }
+
+        const updateData = {
+          status: status,
+          updatedAt: new Date().toISOString()
+        };
+
+        const result = await ridersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Rider not found"
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Rider status updated successfully",
+          modifiedCount: result.modifiedCount
+        });
+      } catch (error) {
+        console.error("Error updating rider status:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to update rider status"
+        });
+      }
+    })
+
+    // Delete rider (for rejection)
+    app.delete('/riders/:id', verifyFirebaseToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const result = await ridersCollection.deleteOne({ _id: new ObjectId(id) });
+        
+        if (result.deletedCount > 0) {
+          res.send({
+            success: true,
+            message: "Rider deleted successfully",
+            deletedCount: result.deletedCount
+          });
+        } else {
+          res.status(404).send({
+            success: false,
+            message: "Rider not found"
+          });
+        }
+      } catch (error) {
+        console.error("Error deleting rider:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to delete rider"
+        });
+      }
     })
 
     // Get API - Fetch parcel data by id
