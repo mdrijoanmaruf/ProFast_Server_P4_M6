@@ -76,6 +76,17 @@ async function run() {
       }
     }
 
+    const verifyAdmin = async (req , res , next) => {
+      const email = req.decoded.email;
+
+      const query = {email}
+      const user = await usersCollection.findOne(query)
+      if(!user || user.role !== 'admin'){
+        return res.status(403).send({message : 'Forbidden Access'})
+      }
+      next()
+    }
+
     // Users
     app.post('/users' , async (req , res) => {
       const email = req.body.email;
@@ -130,7 +141,7 @@ async function run() {
     })
 
     // PATCH API - Update user role
-    app.patch('/users/:id/role', verifyFirebaseToken, async (req, res) => {
+    app.patch('/users/:id/role', verifyFirebaseToken, verifyAdmin, async (req, res) => {
       try {
         const id = req.params.id;
         const { role } = req.body;
@@ -284,7 +295,7 @@ async function run() {
     })
 
     // Raiders
-    app.post('/riders' , async (req , res) => {
+    app.post('/riders' , verifyAdmin , verifyFirebaseToken ,  async (req , res) => {
       const rider = req.body;
       rider.status = 'pending'; // Set default status
       rider.createdAt = new Date().toISOString();
@@ -311,7 +322,7 @@ async function run() {
     })
 
     // Update rider status
-    app.patch('/riders/:id/status', verifyFirebaseToken, async (req, res) => {
+    app.patch('/riders/:id/status', verifyFirebaseToken, verifyAdmin ,  async (req, res) => {
       try {
         const id = req.params.id;
         const { status } = req.body;
@@ -420,7 +431,7 @@ async function run() {
     })
 
     // Delete rider (for rejection)
-    app.delete('/riders/:id', verifyFirebaseToken, async (req, res) => {
+    app.delete('/riders/:id', verifyFirebaseToken, verifyAdmin, async (req, res) => {
       try {
         const id = req.params.id;
 
