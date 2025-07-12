@@ -90,6 +90,138 @@ async function run() {
       res.send(result)
     })
 
+    // Get API - Fetch all users with role filter
+    app.get('/users', verifyFirebaseToken, async (req, res) => {
+      try {
+        const role = req.query.role;
+        const search = req.query.search;
+        
+        let query = {};
+        
+        // Filter by role if provided (admin, user, rider)
+        if (role) {
+          query.role = role;
+        } else {
+          // If no role specified, get admin and user roles only (exclude riders)
+          query.role = { $in: ['admin', 'user'] };
+        }
+        
+        // Add search functionality
+        if (search) {
+          query.$or = [
+            { name: { $regex: search, $options: 'i' } },
+            { email: { $regex: search, $options: 'i' } }
+          ];
+        }
+
+        const options = {
+          sort: { createdAt: -1 }
+        };
+
+        const users = await usersCollection.find(query, options).toArray();
+        res.send(users);
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        res.status(500).send({ 
+          success: false,
+          message: "Failed to fetch users" 
+        });
+      }
+    })
+
+    // PATCH API - Update user role
+    app.patch('/users/:id/role', verifyFirebaseToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { role } = req.body;
+
+        const validRoles = ['admin', 'user', 'rider'];
+        
+        if (!validRoles.includes(role)) {
+          return res.status(400).send({
+            success: false,
+            message: "Invalid role. Must be 'admin', 'user', or 'rider'"
+          });
+        }
+
+        // Get user information before updating
+        const user = await usersCollection.findOne({ _id: new ObjectId(id) });
+        
+        if (!user) {
+          return res.status(404).send({
+            success: false,
+            message: "User not found"
+          });
+        }
+
+        const updateData = {
+          role: role,
+          updatedAt: new Date().toISOString()
+        };
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "User not found"
+          });
+        }
+
+        res.send({
+          success: true,
+          message: `User role updated to ${role} successfully`,
+          modifiedCount: result.modifiedCount
+        });
+      } catch (error) {
+        console.error("Error updating user role:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to update user role"
+        });
+      }
+    })
+
+    // GET API - Get user role by email
+    app.get('/users/role/:email', verifyFirebaseToken, async (req, res) => {
+      try {
+        const email = req.params.email;
+        
+        if (!email) {
+          return res.status(400).send({
+            success: false,
+            message: "Email is required"
+          });
+        }
+
+        const user = await usersCollection.findOne({ email: email });
+        
+        if (!user) {
+          return res.status(404).send({
+            success: false,
+            message: "User not found",
+            role: null
+          });
+        }
+
+        res.send({
+          success: true,
+          email: user.email,
+          role: user.role || 'user', // Default to 'user' if no role is set
+          name: user.name || null
+        });
+      } catch (error) {
+        console.error("Error fetching user role:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch user role"
+        });
+      }
+    })
+
     // All API
 
     // Post API - Create a new parcel
@@ -193,6 +325,16 @@ async function run() {
           });
         }
 
+        // Get rider information before updating
+        const rider = await ridersCollection.findOne({ _id: new ObjectId(id) });
+        
+        if (!rider) {
+          return res.status(404).send({
+            success: false,
+            message: "Rider not found"
+          });
+        }
+
         const updateData = {
           status: status,
           updatedAt: new Date().toISOString()
@@ -210,9 +352,62 @@ async function run() {
           });
         }
 
+        // If rider is being activated, create a user with role 'rider'
+        if (status === 'active') {
+          try {
+            // Check if user already exists
+            const existingUser = await usersCollection.findOne({ email: rider.email });
+            
+            if (!existingUser) {
+              // Create new user with rider role
+              const newUser = {
+                email: rider.email,
+                name: rider.fullName,
+                role: 'rider',
+                phone: rider.phone,
+                address: rider.address,
+                dateOfBirth: rider.dateOfBirth,
+                vehicleType: rider.vehicleType,
+                vehicleModel: rider.vehicleModel,
+                licensePlate: rider.licensePlate,
+                riderId: id, // Reference to rider document
+                createdAt: new Date().toISOString(),
+                lastLoginAt: null,
+                isActive: true
+              };
+
+              await usersCollection.insertOne(newUser);
+              console.log(`User created for rider: ${rider.email}`);
+            } else {
+              // Update existing user to add rider role if they don't have it
+              if (existingUser.role !== 'rider') {
+                await usersCollection.updateOne(
+                  { email: rider.email },
+                  { 
+                    $set: { 
+                      role: 'rider',
+                      riderId: id,
+                      vehicleType: rider.vehicleType,
+                      vehicleModel: rider.vehicleModel,
+                      licensePlate: rider.licensePlate,
+                      updatedAt: new Date().toISOString()
+                    } 
+                  }
+                );
+                console.log(`User role updated to rider for: ${rider.email}`);
+              }
+            }
+          } catch (userError) {
+            console.error("Error creating/updating user for rider:", userError);
+            // Don't fail the rider activation if user creation fails
+          }
+        }
+
         res.send({
           success: true,
-          message: "Rider status updated successfully",
+          message: status === 'active' 
+            ? "Rider status updated successfully and user account created" 
+            : "Rider status updated successfully",
           modifiedCount: result.modifiedCount
         });
       } catch (error) {
