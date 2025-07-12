@@ -309,11 +309,15 @@ async function run() {
         const status = req.query.status;
         const query = status ? { status: status } : {};
         
+        console.log('Riders query:', query);
+
         const options = {
           sort: { createdAt: -1 }
         };
 
         const riders = await ridersCollection.find(query, options).toArray();
+        console.log(`Found ${riders.length} riders with status: ${status || 'all'}`);
+        
         res.send(riders);
       } catch (error) {
         console.error("Error fetching riders:", error);
@@ -612,6 +616,114 @@ async function run() {
         res.status(500).send({
           success: false,
           message: "Failed to update payment status"
+        });
+      }
+    })
+
+    // PATCH API - Assign rider to parcel
+    app.patch('/parcels/:id/assign-rider', verifyFirebaseToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { riderId, riderName, riderEmail, riderPhone, vehicleType, assignedAt, status } = req.body;
+
+        console.log('Assign rider request:', { id, riderId, riderName, riderEmail });
+
+        // Validate required fields
+        if (!riderId || !riderName || !riderEmail) {
+          return res.status(400).send({
+            success: false,
+            message: "riderId, riderName, and riderEmail are required"
+          });
+        }
+
+        // Get parcel information before updating
+        const parcel = await parcelCollection.findOne({_id: new ObjectId(id)});
+        if (!parcel) {
+          return res.status(404).send({
+            success: false,
+            message: "Parcel not found"
+          });
+        }
+
+        console.log('Found parcel:', parcel.trackingNumber);
+
+        // Check if parcel is eligible for assignment (must be paid)
+        if (parcel.paymentStatus !== 'paid' || parcel.status !== 'paid') {
+          return res.status(400).send({
+            success: false,
+            message: "Parcel must be paid before rider assignment"
+          });
+        }
+
+        // Check if parcel is already assigned
+        if (parcel.assignedRider) {
+          return res.status(400).send({
+            success: false,
+            message: "Parcel is already assigned to a rider"
+          });
+        }
+
+        // Verify rider exists and is active
+        const rider = await ridersCollection.findOne({
+          _id: new ObjectId(riderId),
+          status: 'active'
+        });
+
+        if (!rider) {
+          return res.status(404).send({
+            success: false,
+            message: "Active rider not found"
+          });
+        }
+
+        console.log('Found rider:', rider.name || rider.fullName);
+
+        // Update parcel with rider assignment
+        const updateData = {
+          assignedRider: {
+            riderId: riderId,
+            riderName: riderName,
+            riderEmail: riderEmail,
+            riderPhone: riderPhone || rider.phone,
+            vehicleType: vehicleType || rider.vehicleType,
+            assignedAt: assignedAt || new Date().toISOString()
+          },
+          status: status || 'assigned',
+          assignedAt: assignedAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        const result = await parcelCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        console.log('Update result:', result);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Parcel not found"
+          });
+        }
+
+        res.send({
+          success: true,
+          message: `Parcel ${parcel.trackingNumber} successfully assigned to ${riderName}`,
+          data: {
+            parcelId: id,
+            trackingNumber: parcel.trackingNumber,
+            assignedRider: updateData.assignedRider,
+            modifiedCount: result.modifiedCount
+          }
+        });
+
+      } catch (error) {
+        console.error("Error assigning rider to parcel:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to assign rider to parcel",
+          error: error.message
         });
       }
     })
